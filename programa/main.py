@@ -35,7 +35,7 @@ from config import (
 
 # Depois dessa quantidade, a sessao do navegador e reiniciada para
 # reprocessar somente os contatos que falharam.
-LIMITE_ERROS_CONSECUTIVOS = 10
+LIMITE_ERROS_CONSECUTIVOS = 20
 
 
 def escolher_midia():
