@@ -1,0 +1,28 @@
+# Ambiente Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Arquivos gerados pelo PyInstaller
+build/
+dist/
+*.exe
+
+# Estado, perfil do Chrome e logs locais
+runtime/
+
+# Arquivos temporarios e backups
+*.bak
+
+# Configuracoes locais de IDE
+.idea/
+.vscode/
+Thumbs.db
+
+# Dados pessoais e arquivos grandes da campanha
+dados/contatos.xlsx
+dados/*.xls
+dados/*.xlsx
+dados/imagem.*
+dados/video.*
