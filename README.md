@@ -12,7 +12,9 @@ Bot para envio automatizado de mensagens, imagens ou vídeos pelo WhatsApp Web u
 - A coluna do telefone não é usada como variável da mensagem.
 - Registro de progresso para continuar uma campanha interrompida.
 - Intervalo aleatório de 10 a 20 segundos entre mensagens.
-- Pausa de 10 minutos a cada 10 mensagens enviadas com sucesso.
+- Pausa de X minutos a cada Y mensagens enviadas com sucesso (baseado no tempo que você definir em: 
+  MENSAGENS_POR_LOTE = X
+  PAUSA_ENTRE_LOTES_SEGUNDOS = Y * 60.
 - Reinício do Chrome após 10 erros consecutivos.
 
 ## Estrutura
