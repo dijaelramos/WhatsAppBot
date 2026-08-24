@@ -63,7 +63,9 @@ Ao escolher a coluna `3` como contato:
 - a coluna `3` será usada somente para abrir o WhatsApp;
 - a coluna `4` será `{var3}`.
 
-Não inclua o código do país duas vezes. O telefone deve estar em formato compatível com o WhatsApp, preferencialmente somente com números, por exemplo `5581999999999`.
+O programa pergunta se os telefones já começam com o código do Brasil (`55`). Se você responder `N`, ele acrescentará `55` automaticamente quando necessário. Se responder `S`, os números serão usados com o prefixo já informado.
+
+Símbolos são aceitos e removidos automaticamente. Por exemplo, `(85)99999-9999` será convertido para `85999999999`; respondendo `N` à pergunta do código do Brasil, o número usado no WhatsApp será `5585999999999`.
 
 ## Configuração da mensagem
 
@@ -79,7 +81,10 @@ Durante a execução, o programa pergunta:
 
 1. Se será enviada uma imagem ou um vídeo.
 2. Em qual coluna está o contato do WhatsApp.
-3. Quantas variáveis de texto serão usadas, de 1 a 5.
+3. Se os contatos já começam com `55` ou se o código deve ser acrescentado.
+4. Quantas variáveis de texto serão usadas, de 1 a 5.
+
+O telefone é sempre usado somente para abrir a conversa no WhatsApp. A coluna escolhida não entra na sequência das variáveis da mensagem.
 
 Uma variável que não existir entre as colunas disponíveis permanece escrita no texto como `{varN}`. Revise a mensagem antes de iniciar a campanha.
 

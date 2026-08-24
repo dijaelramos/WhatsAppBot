@@ -1,5 +1,6 @@
 from time import sleep
 from random import randint
+import re
 import traceback
 
 # Esta verificacao roda antes dos imports que dependem de bibliotecas instaladas.
@@ -105,6 +106,34 @@ def escolher_coluna_contato(contatos):
         )
 
 
+def escolher_prefixo_brasil():
+    """Define se os telefones ja possuem o codigo do Brasil (55)."""
+    print()
+    print("Os contatos já começam com 55 (código do Brasil)?")
+    print("Exemplo sem 55: 85999999999 -> será usado 5585999999999")
+
+    while True:
+        escolha = input("Digite S para sim ou N para não: ").strip().upper()
+        if escolha in {"S", "SIM"}:
+            print("Os contatos serão usados com o 55 já informado.")
+            return False
+        if escolha in {"N", "NAO", "NÃO"}:
+            print("O código 55 será acrescentado aos contatos.")
+            return True
+        print("Opção inválida. Digite S ou N.")
+
+
+def preparar_telefone(valor, acrescentar_codigo_brasil):
+    """Remove caracteres extras e garante o codigo 55 quando necessario."""
+    telefone_bruto = str(valor).strip()
+    if telefone_bruto.endswith(".0"):
+        telefone_bruto = telefone_bruto[:-2]
+    telefone = re.sub(r"\D", "", telefone_bruto)
+    if acrescentar_codigo_brasil and not telefone.startswith("55"):
+        telefone = "55" + telefone
+    return telefone
+
+
 def escolher_inicio(contatos, estado):
     """Escolhe onde continuar e recupera os contadores salvos."""
     if not estado:
@@ -181,6 +210,7 @@ def main():
     abrir_whatsapp_web(driver)
     contatos = ler_contatos()
     coluna_contato = escolher_coluna_contato(contatos)
+    acrescentar_codigo_brasil = escolher_prefixo_brasil()
     quantidade_variaveis = escolher_quantidade_variaveis()
 
     # O estado permite continuar uma campanha interrompida sem duplicar envios.
@@ -214,7 +244,10 @@ def main():
 
         contato = contatos[indice]
         nome = str(list(contato.values())[0]).strip()
-        telefone = str(list(contato.values())[coluna_contato - 1]).strip()
+        telefone = preparar_telefone(
+            list(contato.values())[coluna_contato - 1],
+            acrescentar_codigo_brasil,
+        )
         titulo = f"[{indice + 1}/{total}] {nome}"
 
         print("")
