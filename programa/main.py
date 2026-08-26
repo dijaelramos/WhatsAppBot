@@ -35,7 +35,8 @@ from config import (
 
 # Depois dessa quantidade, a sessao do navegador e reiniciada para
 # reprocessar somente os contatos que falharam.
-LIMITE_ERROS_CONSECUTIVOS = 20
+LIMITE_ERROS_CONSECUTIVOS = 200 # Limite de erros consecutivos antes de reiniciar a sessão.
+LIMITE_TENTATIVAS_REPROCESSAMENTO = 2 # Limite de tentativas para reprocessar contatos falhados.
 
 
 def escolher_midia():
@@ -134,6 +135,36 @@ def preparar_telefone(valor, acrescentar_codigo_brasil):
     return telefone
 
 
+def escolher_tipo_chamada(contatos, estado):
+    """Define se a campanha sera nova ou continuara o progresso salvo."""
+    print()
+    print("Esta é uma nova chamada/campanha?")
+    print("SIM: limpa o progresso e envia todos desde o início.")
+    print("NÃO: mantém o progresso e mostra as opções de continuação.")
+
+    while True:
+        escolha = input("Digite SIM ou NÃO: ").strip().upper()
+        if escolha in {"SIM", "S"}:
+            limpar_progresso()
+            print("Progresso limpo. A campanha começará do início.")
+            return 0, 0, 0, set()
+
+        if escolha in {"NAO", "NÃO", "N"}:
+            if estado:
+                indice, enviados, erros = escolher_inicio(contatos, estado)
+                return (
+                    indice,
+                    enviados,
+                    erros,
+                    set(estado.get("enviados_indices", [])),
+                )
+
+            print("Nenhum progresso salvo. A campanha começará do início.")
+            return 0, 0, 0, set()
+
+        print("Opção inválida. Digite SIM ou NÃO.")
+
+
 def escolher_inicio(contatos, estado):
     """Escolhe onde continuar e recupera os contadores salvos."""
     if not estado:
@@ -215,7 +246,12 @@ def main():
 
     # O estado permite continuar uma campanha interrompida sem duplicar envios.
     estado = carregar_progresso()
-    indice_inicial, enviados, erros = escolher_inicio(contatos, estado)
+    (
+        indice_inicial,
+        enviados,
+        erros,
+        enviados_indices,
+    ) = escolher_tipo_chamada(contatos, estado)
 
     if estado:
         log("")
@@ -223,9 +259,11 @@ def main():
 
     mensagem_base = carregar_mensagem()
     total = len(contatos)
-    enviados_indices = set(estado.get("enviados_indices", [])) if estado else set()
     falhos_indices = set(estado.get("falhos_indices", [])) if estado else set()
     erros_consecutivos = 0
+    falhas_consecutivas_indices = set()
+    lote_em_recuperacao = None
+    tentativas_reprocessamento = 0
 
     print()
     print("=" * 60)
@@ -272,12 +310,17 @@ def main():
 
             anexar_midia(driver, arquivo_midia)
             enviar_midia(driver)
+            sleep(4)
             escrever_texto(driver, texto)
             enviar_texto(driver)
+            sleep(4)
 
             enviados += 1
             enviados_indices.add(indice)
             falhos_indices.discard(indice)
+            falhas_consecutivas_indices.clear()
+            lote_em_recuperacao = None
+            tentativas_reprocessamento = 0
             salvar_progresso(
                 indice,
                 nome,
@@ -314,6 +357,7 @@ def main():
             # Salva a falha imediatamente para que uma interrupcao nao perca a fila.
             erros += 1
             falhos_indices.add(indice)
+            falhas_consecutivas_indices.add(indice)
             log("")
             log(f"ERRO com {nome}")
             log(str(erro))
@@ -330,18 +374,40 @@ def main():
 
             erros_consecutivos += 1
             if erros_consecutivos >= LIMITE_ERROS_CONSECUTIVOS:
-                # A nova sessao recebe a fila ordenada dos contatos que falharam.
+                lote_falhas = sorted(falhas_consecutivas_indices)
+                if lote_em_recuperacao == lote_falhas:
+                    tentativas_reprocessamento += 1
+                else:
+                    lote_em_recuperacao = lote_falhas
+                    tentativas_reprocessamento = 1
+
+                # A nova sessao recebe somente o bloco que falhou consecutivamente.
                 log(
                     f"{LIMITE_ERROS_CONSECUTIVOS} erros consecutivos. "
-                    "Reiniciando o Chrome para tentar novamente os falhos."
+                    f"Tentativa {tentativas_reprocessamento}/"
+                    f"{LIMITE_TENTATIVAS_REPROCESSAMENTO} para o bloco "
+                    f"{lote_falhas[0] + 1}-{lote_falhas[-1] + 1}."
                 )
                 driver.quit()
                 finalizar_chrome()
                 remover_lock()
                 driver = iniciar_chrome()
                 abrir_whatsapp_web(driver)
-                indices_para_processar = sorted(falhos_indices)
+                fila_restante = [
+                    restante
+                    for restante in indices_para_processar
+                    if restante not in lote_falhas
+                ]
+                if tentativas_reprocessamento <= LIMITE_TENTATIVAS_REPROCESSAMENTO:
+                    indices_para_processar = lote_falhas + fila_restante
+                else:
+                    log(
+                        "Bloco de falhas repetido duas vezes. "
+                        "Avançando para o próximo contato."
+                    )
+                    indices_para_processar = fila_restante
                 erros_consecutivos = 0
+                falhas_consecutivas_indices.clear()
             continue
 
     # Mantem o estado para uma proxima execucao enquanto houver falhas pendentes.

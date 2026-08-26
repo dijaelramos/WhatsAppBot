@@ -71,14 +71,14 @@ PROFILE = "Default"
 # TEMPOS
 # ==========================================
 
-TEMPO_ESPERA = 30
+TEMPO_ESPERA = 30 # Tempo de espera para o WhatsApp Web carregar (em segundos).
 
-TEMPO_ENTRE_MENSAGENS_MIN = 10
+TEMPO_ENTRE_MENSAGENS_MIN = 10 # Tempo mínimo entre mensagens (em segundos).
 
-TEMPO_ENTRE_MENSAGENS_MAX = 20
+TEMPO_ENTRE_MENSAGENS_MAX = 20 # Tempo máximo entre mensagens (em segundos).
 
-MENSAGENS_POR_LOTE = 20
+MENSAGENS_POR_LOTE = 25 # Envia mensagens em lotes, depois pausa para evitar bloqueio do WhatsApp
 
-PAUSA_ENTRE_LOTES_SEGUNDOS = 10 * 60
+PAUSA_ENTRE_LOTES_SEGUNDOS = 10 * 60 # Pausa de X minutos entre lotes de mensagens.
 
 MAX_TENTATIVAS = 3  # tentativas de envio
