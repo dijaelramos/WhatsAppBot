@@ -35,8 +35,8 @@ ARQUIVO_VIDEO = DADOS / "video.mp4"
 # RUNTIME (tudo que é gerado pela execução)
 # ==========================================
 
-# O runtime pertence ao backend e nao deve misturar-se com dados editaveis.
-RUNTIME = PROGRAMA_DIR / "runtime"
+# Dados de execucao ficam na pasta-base, ao lado de dados/.
+RUNTIME = BASE_DIR / "runtime"
 
 LOGS = RUNTIME / "logs"
 
@@ -63,7 +63,7 @@ CHROME_BINARY = next(
 # no dia a dia. Foi criada copiando o Profile 9 uma única vez
 # (veja scripts/copiar_perfil.py). O perfil fica no disco local porque o
 # Chrome pode falhar ao iniciar quando o user-data-dir está em uma rede.
-LEGACY_USER_DATA = RUNTIME / "chrome_automacao"
+LEGACY_USER_DATA = PROGRAMA_DIR / "runtime" / "chrome_automacao"
 USER_DATA = str(
 	Path.home() / "AppData" / "Local" / "WhatsAppBot" / "chrome_automacao"
 )
@@ -76,11 +76,11 @@ PROFILE = "Default"
 
 TEMPO_ESPERA = 60 # Tempo de espera para o WhatsApp Web carregar (em segundos).
 
-TEMPO_ENTRE_MENSAGENS_MIN = 60 # Intervalo mínimo fixo em segundos entre mensagens.
+TEMPO_ENTRE_MENSAGENS_MIN = 600 # Intervalo mínimo fixo em segundos entre mensagens.
 
-TEMPO_ENTRE_MENSAGENS_MAX = 60 # Intervalo máximo fixo em segundos entre mensagens.
+TEMPO_ENTRE_MENSAGENS_MAX = 600 # Intervalo máximo fixo em segundos entre mensagens.
 
-MENSAGENS_POR_LOTE = 500 # Envia mensagens em lotes, depois pausa.
+MENSAGENS_POR_LOTE = 50 # Envia mensagens em lotes, depois pausa.
 
 PAUSA_ENTRE_LOTES_SEGUNDOS = 8 * 60 * 60 # Pausa de oito horas entre lotes.
 

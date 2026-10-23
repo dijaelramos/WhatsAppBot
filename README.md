@@ -28,7 +28,8 @@ WhatsAppBot/
 │   ├── main.py
 │   ├── config.py
 │   ├── core/
-│   └── runtime/             # progresso, logs e outros dados de execução
+│   └── scripts/
+├── runtime/                 # progresso, logs e outros dados de execução
 └── README.md
 ```
 
@@ -101,6 +102,8 @@ Os valores atuais estão em `programa/config.py`:
 - `PAUSA_ENTRE_LOTES_SEGUNDOS`: atualmente configurada para 8 horas.
 - `HORA_INICIO_PAUSA_NOTURNA` e `HORA_FIM_PAUSA_NOTURNA`: pausa entre meia-noite e 06:00 no horário local.
 
+As esperas entre mensagens e entre lotes respeitam a pausa noturna. Se uma espera deveria terminar entre 00:00 e 06:00, o bot aguarda até as 06:00 para continuar; se o prazo da espera terminar depois das 06:00, ele mantém esse prazo.
+
 Após 200 erros consecutivos, o programa reinicia a sessão do Chrome e tenta novamente o bloco de contatos que falhou. O limite de tentativas de reprocessamento está definido em `programa/main.py`.
 
 ## Executar pelo Python
@@ -127,12 +130,14 @@ O executável será criado em `programa/dist/WhatsappBot.exe`. Mantenha a pasta 
 
 ## Progresso e logs
 
-Os arquivos gerados ficam em `programa/runtime/`, exceto o perfil local do Chrome:
+Os arquivos gerados ficam em `runtime/`, ao lado de `dados/` (na raiz do projeto ao executar `programa/main.py`), exceto o perfil local do Chrome:
 
 - `estado.json`: guarda o índice, contadores, contatos enviados e falhas pendentes para continuar a campanha.
 - `logs/`: cria um arquivo `envio_*.txt` com os eventos e o resumo da execução. O cabeçalho atual é `WHATSAPP BOT`.
 - `screenshots/`: pode receber capturas de tela de diagnóstico quando o WhatsApp Web não carrega.
 - `%LOCALAPPDATA%\WhatsAppBot\chrome_automacao`: perfil separado usado pelo Chrome automatizado.
+
+Se existir um perfil antigo em `programa/runtime/chrome_automacao`, ele continua sendo reconhecido como origem de migração para o perfil local. Os arquivos antigos de `programa/runtime/` não são removidos automaticamente.
 
 Ao iniciar uma campanha nova e responder `SIM`, o progresso anterior é limpo pelo programa. Para continuar, responda `NÃO` e escolha uma das opções disponíveis. Não apague `estado.json` se precisar recuperar uma campanha interrompida.
 

@@ -1,6 +1,6 @@
 from time import sleep
 from random import randint
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 import traceback
 
@@ -164,6 +164,47 @@ def aguardar_fora_horario_noturno():
         f"{retomar:%H:%M} (horário local)."
     )
     sleep(espera)
+
+
+def calcular_fim_espera_com_pausa_noturna(agora, segundos):
+    """Adia o fim de uma espera para as 06h quando ela atravessa a madrugada."""
+    fim_previsto = agora + timedelta(seconds=segundos)
+    inicio_pausa = agora.replace(
+        hour=HORA_INICIO_PAUSA_NOTURNA,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    fim_pausa = agora.replace(
+        hour=HORA_FIM_PAUSA_NOTURNA,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    if agora >= fim_pausa:
+        inicio_pausa += timedelta(days=1)
+        fim_pausa += timedelta(days=1)
+
+    if fim_previsto >= inicio_pausa:
+        return max(fim_previsto, fim_pausa)
+
+    return fim_previsto
+
+
+def dormir_respeitando_horario_noturno(segundos):
+    """Executa uma espera sem retomar envios entre meia-noite e 06h."""
+    agora = datetime.now()
+    fim_previsto = agora + timedelta(seconds=segundos)
+    fim_espera = calcular_fim_espera_com_pausa_noturna(agora, segundos)
+
+    if fim_espera > fim_previsto:
+        log(
+            "Pausa noturna ativa. Retomando às "
+            f"{fim_espera:%H:%M} (horário local)."
+        )
+
+    sleep(max(0, (fim_espera - datetime.now()).total_seconds()))
 
 
 def escolher_inicio_nova_campanha(contatos):
@@ -428,7 +469,7 @@ def main():
 
             log("Mensagem enviada com sucesso.")
             log(f"Aguardando {espera} segundos...")
-            sleep(espera)
+            dormir_respeitando_horario_noturno(espera)
 
             ainda_ha_envios = any(
                 restante not in enviados_indices
@@ -440,7 +481,9 @@ def main():
                     f"{MENSAGENS_POR_LOTE} mensagens enviadas. "
                     f"Pausa de {pausa_horas} horas antes do próximo lote."
                 )
-                sleep(PAUSA_ENTRE_LOTES_SEGUNDOS)
+                dormir_respeitando_horario_noturno(
+                    PAUSA_ENTRE_LOTES_SEGUNDOS
+                )
 
         except Exception as erro:
             # Salva a falha imediatamente para que uma interrupcao nao perca a fila.
