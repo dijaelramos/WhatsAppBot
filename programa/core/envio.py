@@ -1,8 +1,8 @@
 import time
 import shutil
 import tempfile
+from uuid import uuid4
 
-import pyperclip
 import pyautogui
 
 from pathlib import Path
@@ -10,6 +10,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import StaleElementReferenceException
 from core.logger import log
 
 
@@ -23,6 +24,47 @@ def fechar_dialogo_nativo():
         time.sleep(0.3)
     except Exception:
         pass
+
+
+def clicar_com_retentativa(driver, locator, tentativas=5):
+    """Reencontra e clica no elemento caso o WhatsApp reconstrua o menu."""
+    for tentativa in range(tentativas):
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.element_to_be_clickable(locator)
+            ).click()
+            return
+        except StaleElementReferenceException:
+            if tentativa == tentativas - 1:
+                raise
+            time.sleep(0.3)
+
+
+def clicar_qualquer_anexo(driver):
+    """Clica no botão de anexar usando seletores compatíveis com versões do WhatsApp Web."""
+    seletores = [
+        (By.XPATH, "//button[@aria-label='Anexar']"),
+        (By.XPATH, "//div[@role='button' and @aria-label='Anexar']"),
+        (By.XPATH, "//span[@data-testid='clip']"),
+        (By.XPATH, "//span[@data-testid='plus-rounded']"),
+        (By.XPATH, "//div[@data-testid='attach']"),
+        (By.XPATH, "//div[@aria-label='Anexar']"),
+    ]
+
+    ultimo_erro = None
+    for selector in seletores:
+        try:
+            elemento = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable(selector)
+            )
+            elemento.click()
+            return True
+        except Exception as erro:
+            ultimo_erro = erro
+
+    if ultimo_erro is not None:
+        raise ultimo_erro
+    return False
 
 
 def abrir_conversa(driver, telefone):
@@ -58,7 +100,9 @@ def anexar_midia(driver, caminho_arquivo):
     # A cópia local também evita falhas quando o compartilhamento oscila durante o upload.
     pasta_temporaria = Path(tempfile.gettempdir()) / "WhatsAppBot" / "uploads"
     pasta_temporaria.mkdir(parents=True, exist_ok=True)
-    caminho_upload = pasta_temporaria / caminho_original.name
+    caminho_upload = pasta_temporaria / (
+        f"{uuid4().hex}_{caminho_original.name}"
+    )
     shutil.copy2(caminho_original, caminho_upload)
 
     log(f"Anexando mídia: {caminho_original}")
@@ -66,47 +110,82 @@ def anexar_midia(driver, caminho_arquivo):
 
     fechar_dialogo_nativo()
 
-    WebDriverWait(driver, 30).until(
-        EC.element_to_be_clickable(
-            (By.XPATH, "//span[@data-testid='plus-rounded']")
-        )
-    ).click()
+    clicar_qualquer_anexo(driver)
 
     log("Menu aberto.")
 
-    WebDriverWait(driver, 30).until(
-        EC.element_to_be_clickable(
-            (By.XPATH, "//span[contains(text(),'Fotos e vídeos')]")
-        )
-    ).click()
+    seletores_fotos = [
+        (By.XPATH, "//div[contains(@aria-label,'Fotos e vídeos')]"),
+        (By.XPATH, "//span[contains(text(),'Fotos e vídeos')]"),
+        (By.XPATH, "//div[contains(@aria-label,'Photos and videos')]"),
+        (By.XPATH, "//div[contains(@aria-label,'Galeria')]"),
+    ]
 
-    log("Cliquei em Fotos e vídeos")
-
-    inputs = WebDriverWait(driver, 30).until(
-        EC.presence_of_all_elements_located(
-            (By.XPATH, "//input[@type='file']")
-        )
-    )
-
-    log(f"Foram encontrados {len(inputs)} inputs.")
-
-    input_file = None
-
-    for i, inp in reversed(list(enumerate(inputs))):
-        accept = inp.get_attribute("accept")
-        print("-" * 32)
-        print(f"Input: {i}")
-        print(f"accept: {accept}")
-
-        if accept and "video/mp4" in accept:
-            input_file = inp
+    ultimo_erro = None
+    for selector in seletores_fotos:
+        try:
+            elemento = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable(selector)
+            )
+            elemento.click()
+            log("Cliquei em Fotos e vídeos")
             break
+        except Exception as erro:
+            ultimo_erro = erro
+    else:
+        if ultimo_erro is not None:
+            raise ultimo_erro
+        raise TimeoutError("Não encontrei o item de mídia do WhatsApp Web.")
 
-    if input_file is None:
-        raise Exception("Não encontrei o input de Fotos e Vídeos.")
+    seletor_inputs = (By.XPATH, "//input[@type='file']")
 
-    input_file.send_keys(str(caminho_upload))
+    def selecionar_input(detalhe):
+        inputs = WebDriverWait(driver, 30).until(
+            EC.presence_of_all_elements_located(seletor_inputs)
+        )
+        log(f"Foram encontrados {len(inputs)} inputs.")
 
+        caminho_extensao = caminho_upload.suffix.lower()
+        candidatos_midia = []
+
+        for i, inp in enumerate(inputs):
+            accept = inp.get_attribute("accept") or ""
+            print("-" * 32)
+            print(f"Input: {i}")
+            print(f"accept: {accept}")
+
+            tipos_aceitos = {
+                tipo.strip().lower()
+                for tipo in accept.split(",")
+                if tipo.strip()
+            }
+            aceita_imagem = "image/*" in tipos_aceitos
+            aceita_video = "video/*" in tipos_aceitos or "video/mp4" in tipos_aceitos
+
+            if aceita_imagem and aceita_video:
+                candidatos_midia.append(inp)
+
+        if len(candidatos_midia) == 1:
+            candidatos_midia[0].send_keys(str(caminho_upload))
+            return
+
+        if len(candidatos_midia) > 1:
+            candidatos_midia[-1].send_keys(str(caminho_upload))
+            return
+
+        raise Exception(
+            "Não encontrei o input exclusivo de Fotos e Vídeos "
+            f"({detalhe}); extensão selecionada: {caminho_extensao}."
+        )
+
+    for tentativa in range(5):
+        try:
+            selecionar_input(f"tentativa {tentativa + 1}")
+            break
+        except StaleElementReferenceException:
+            if tentativa == 4:
+                raise
+            time.sleep(0.3)
     log("Arquivo selecionado.")
 
     # Vídeo demora mais pra gerar a pré-visualização/thumbnail do que
@@ -143,9 +222,7 @@ def enviar_midia(driver):
 
 
 def escrever_texto(driver, texto):
-    """Cola o texto na caixa de mensagem da conversa (ainda não envia).
-    Usa clipboard (Ctrl+V) em vez de send_keys puro, porque evita
-    problemas com acentos e emojis no Windows."""
+    """Digita o texto na caixa de mensagem sem enviá-lo."""
 
     caixa = WebDriverWait(driver, 30).until(
         EC.presence_of_element_located(
@@ -153,13 +230,15 @@ def escrever_texto(driver, texto):
         )
     )
 
-    pyperclip.copy(texto)
-
     caixa.click()
     time.sleep(0.3)
 
-    caixa.send_keys(Keys.CONTROL, "v")
-    time.sleep(0.5)
+    linhas = texto.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for indice, linha in enumerate(linhas):
+        if linha:
+            caixa.send_keys(linha)
+        if indice < len(linhas) - 1:
+            caixa.send_keys(Keys.SHIFT, Keys.ENTER)
 
     log("Texto escrito na caixa de mensagem.")
 

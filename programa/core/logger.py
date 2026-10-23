@@ -34,7 +34,7 @@ def titulo(texto):
 
 def iniciar_log():
     """Abre a identificacao da campanha atual."""
-    titulo("INFINITY CURSOS - WHATSAPP BOT")
+    titulo("WHATSAPP BOT")
     log(
         f"Data/Hora: {datetime.now():%d/%m/%Y %H:%M:%S}"
     )

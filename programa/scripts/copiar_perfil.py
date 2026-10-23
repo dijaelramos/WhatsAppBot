@@ -6,9 +6,10 @@ ORIGEM = (
     / "User Data" / "Profile 9"
 )
 
-# Pasta nova, totalmente isolada do Chrome que você usa no dia a dia.
-# Agora dentro de runtime/, junto com o resto do que é gerado em execução.
-DESTINO_USER_DATA = Path(__file__).resolve().parent.parent / "runtime" / "chrome_automacao"
+# Perfil isolado em disco local: o Chrome pode falhar em user-data-dir de rede.
+DESTINO_USER_DATA = (
+    Path.home() / "AppData" / "Local" / "WhatsAppBot" / "chrome_automacao"
+)
 DESTINO_PROFILE = DESTINO_USER_DATA / "Default"
 
 

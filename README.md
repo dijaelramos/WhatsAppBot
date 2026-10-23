@@ -6,16 +6,14 @@ Bot para envio automatizado de mensagens, imagens ou vídeos pelo WhatsApp Web u
 
 ## Funcionalidades
 
-- Envio de imagem ou vídeo junto com uma mensagem personalizada.
-- Variáveis `{var1}` a `{var5}` baseadas na posição das colunas da planilha.
-- Escolha, no terminal, da coluna que contém o telefone do WhatsApp.
-- A coluna do telefone não é usada como variável da mensagem.
-- Registro de progresso para continuar uma campanha interrompida.
-- Intervalo aleatório de 10 a 20 segundos entre mensagens.
-- Pausa de X minutos a cada Y mensagens enviadas com sucesso (baseado no tempo que você definir em: 
-  ├──MENSAGENS_POR_LOTE = X
-  └── PAUSA_ENTRE_LOTES_SEGUNDOS = Y * 60.
-- Reinício do Chrome após 10 erros consecutivos.
+- Envio de imagem, vídeo ou somente texto, com mensagem personalizada.
+- Variáveis `{var1}` a `{var5}`, definidas pela posição das colunas da planilha.
+- Escolha, no terminal, da coluna que contém o telefone e da quantidade de variáveis.
+- Normalização dos telefones e opção para acrescentar o código do Brasil (`55`).
+- Digitação do texto pelo Selenium, preservando as quebras de linha.
+- Retomada de campanhas, seleção do contato inicial e reprocessamento de contatos com falha.
+- Pausa noturna entre 00:00 e 06:00, conforme o horário local do computador.
+- Reinício da sessão do Chrome após 200 erros consecutivos.
 
 ## Estrutura
 
@@ -29,8 +27,9 @@ WhatsAppBot/
 ├── programa/
 │   ├── main.py
 │   ├── config.py
-│   └── core/
-└── runtime/                 # criado durante a execução
+│   ├── core/
+│   └── runtime/             # progresso, logs e outros dados de execução
+└── README.md
 ```
 
 ## Requisitos
@@ -40,10 +39,10 @@ WhatsAppBot/
 - Google Chrome instalado.
 - Uma sessão do WhatsApp Web no perfil de automação.
 
-As bibliotecas Python são verificadas automaticamente na primeira execução. Também podem ser instaladas manualmente:
+As bibliotecas Python são verificadas na inicialização. Se necessário, o programa pode instalá-las automaticamente. A instalação manual é:
 
 ```powershell
-python -m pip install pandas openpyxl selenium pyautogui pyperclip
+python -m pip install pandas openpyxl selenium pyautogui
 ```
 
 ## Configuração da planilha
@@ -58,20 +57,20 @@ Exemplo:
 |---|---|---|---|
 | Ana | Bruno | 5581999999999 | Curso de Python |
 
-Ao escolher a coluna `3` como contato:
+Os títulos da primeira linha são ignorados. Ao escolher a coluna `3` como telefone:
 
 - a coluna `1` será `{var1}`;
 - a coluna `2` será `{var2}`;
 - a coluna `3` será usada somente para abrir o WhatsApp;
 - a coluna `4` será `{var3}`.
 
-O programa pergunta se os telefones já começam com o código do Brasil (`55`). Se você responder `N`, ele acrescentará `55` automaticamente quando necessário. Se responder `S`, os números serão usados com o prefixo já informado.
+O programa pede a coluna do telefone e pergunta se os números já começam com o código do Brasil (`55`). Respondendo `N`, ele acrescenta `55` quando necessário; respondendo `S`, mantém o código que já está no número. Pontuação e outros caracteres não numéricos são removidos.
 
-Símbolos são aceitos e removidos automaticamente. Por exemplo, `(85)99999-9999` será convertido para `85999999999`; respondendo `N` à pergunta do código do Brasil, o número usado no WhatsApp será `5585999999999`.
+Exemplo: `(85) 99999-9999` é normalizado para `85999999999`; respondendo `N`, o número usado no WhatsApp será `5585999999999`.
 
 ## Configuração da mensagem
 
-Edite `dados/mensagem.txt` usando as variáveis na ordem das colunas, desconsiderando a coluna escolhida como telefone:
+Edite `dados/mensagem.txt` usando `{var1}` a `{var5}` na ordem das colunas, desconsiderando a coluna escolhida como telefone:
 
 ```text
 Olá {var1}, tudo bem?
@@ -79,16 +78,30 @@ Você foi indicado por {var2}.
 Temos uma oportunidade sobre {var3}.
 ```
 
+Variáveis sem uma coluna correspondente permanecem no texto como `{varN}`. O programa não substitui automaticamente marcadores como `{Nome}`; use `{var1}`, `{var2}` etc.
+
 Durante a execução, o programa pergunta:
 
-1. Se será enviada uma imagem ou um vídeo.
-2. Em qual coluna está o contato do WhatsApp.
+1. Se será enviada uma imagem, um vídeo ou somente texto.
+2. Em qual coluna está o telefone do WhatsApp.
 3. Se os contatos já começam com `55` ou se o código deve ser acrescentado.
 4. Quantas variáveis de texto serão usadas, de 1 a 5.
+5. Se a campanha é nova ou se deve continuar o progresso salvo.
 
-O telefone é sempre usado somente para abrir a conversa no WhatsApp. A coluna escolhida não entra na sequência das variáveis da mensagem.
+Em uma nova campanha, é possível começar do primeiro contato ou escolher um contato da lista. Ao continuar uma campanha, também é possível retomar o próximo contato, escolher um contato ou começar novamente. Contatos já enviados são pulados quando o progresso é mantido.
 
-Uma variável que não existir entre as colunas disponíveis permanece escrita no texto como `{varN}`. Revise a mensagem antes de iniciar a campanha.
+O telefone é usado somente para abrir a conversa e não entra na sequência das variáveis da mensagem. Revise a mensagem e a ordem das colunas antes de iniciar a campanha.
+
+## Intervalos e recuperação
+
+Os valores atuais estão em `programa/config.py`:
+
+- `TEMPO_ENTRE_MENSAGENS_MIN` e `TEMPO_ENTRE_MENSAGENS_MAX`: ambos estão em 60 segundos, então a espera após cada envio bem-sucedido é fixa em 1 minuto. Para configurar outro intervalo fixo, defina os dois valores em segundos com o mesmo número.
+- `MENSAGENS_POR_LOTE`: pausa após 500 mensagens enviadas com sucesso, desde que ainda haja contatos a processar.
+- `PAUSA_ENTRE_LOTES_SEGUNDOS`: atualmente configurada para 8 horas.
+- `HORA_INICIO_PAUSA_NOTURNA` e `HORA_FIM_PAUSA_NOTURNA`: pausa entre meia-noite e 06:00 no horário local.
+
+Após 200 erros consecutivos, o programa reinicia a sessão do Chrome e tenta novamente o bloco de contatos que falhou. O limite de tentativas de reprocessamento está definido em `programa/main.py`.
 
 ## Executar pelo Python
 
@@ -99,7 +112,7 @@ cd P:\DEV\Python\WhatsAppBot\programa
 python main.py
 ```
 
-Na primeira execução, o Chrome abrirá o WhatsApp Web. Escaneie o QR Code e aguarde o login ser concluído. O perfil usado pela automação fica em `runtime/chrome_automacao`, separado do seu perfil normal do Chrome.
+Na primeira execução, o Chrome abrirá o WhatsApp Web. Escaneie o QR Code e aguarde o login ser concluído. O perfil usado pela automação fica em `%LOCALAPPDATA%\WhatsAppBot\chrome_automacao`, separado do seu perfil normal do Chrome. Se houver um perfil antigo em `programa/runtime/chrome_automacao`, ele será copiado para essa pasta local na primeira execução; a cópia original será mantida.
 
 ## Criar o executável
 
@@ -110,25 +123,30 @@ python -m pip install pyinstaller
 pyinstaller --onefile --name WhatsappBot main.py
 ```
 
-O executável será criado em `programa/dist/WhatsappBot.exe`. Mantenha a pasta `dados` ao lado do executável e coloque nela a planilha, a mensagem e o arquivo de mídia.
+O executável será criado em `programa/dist/WhatsappBot.exe`. Mantenha a pasta `dados` ao lado do executável e coloque nela a planilha, a mensagem e os arquivos de mídia. O Chrome precisa estar instalado no computador.
 
 ## Progresso e logs
 
-Os arquivos gerados ficam em `programa/runtime/`:
+Os arquivos gerados ficam em `programa/runtime/`, exceto o perfil local do Chrome:
 
-- `estado.json`: permite continuar a campanha sem reenviar contatos já concluídos.
-- `logs/`: registra os envios, erros e pausas.
-- `chrome_automacao/`: perfil separado usado pelo Chrome automatizado.
+- `estado.json`: guarda o índice, contadores, contatos enviados e falhas pendentes para continuar a campanha.
+- `logs/`: cria um arquivo `envio_*.txt` com os eventos e o resumo da execução. O cabeçalho atual é `WHATSAPP BOT`.
+- `screenshots/`: pode receber capturas de tela de diagnóstico quando o WhatsApp Web não carrega.
+- `%LOCALAPPDATA%\WhatsAppBot\chrome_automacao`: perfil separado usado pelo Chrome automatizado.
 
-Para começar uma campanha completamente nova, remova o `estado.json` somente quando tiver certeza de que não precisa continuar a campanha anterior.
+Ao iniciar uma campanha nova e responder `SIM`, o progresso anterior é limpo pelo programa. Para continuar, responda `NÃO` e escolha uma das opções disponíveis. Não apague `estado.json` se precisar recuperar uma campanha interrompida.
 
 ## Publicação no GitHub
 
-Dados pessoais, mídias, logs, perfil do Chrome, executáveis e arquivos temporários são ignorados pelo `.gitignore`. Antes de publicar alterações, confira o que será enviado:
+O `.gitignore` exclui planilhas de contatos, mídias, arquivos temporários e artefatos gerados. O texto da campanha em `dados/*.txt` não é ignorado; não use `git add .` neste projeto, pois isso pode publicar conteúdo da campanha.
+
+Adicione somente os arquivos de código e documentação que deseja publicar e revise o stage antes do commit:
 
 ```powershell
 git status
-git add .
+git add README.md programa/main.py programa/config.py programa/core programa/scripts
+git diff --cached --stat
+git diff --cached
 git commit -m "descreve a alteração"
 git push
 ```

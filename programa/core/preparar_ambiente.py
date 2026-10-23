@@ -5,7 +5,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from config import USER_DATA, PROFILE
+from config import LEGACY_USER_DATA, USER_DATA, PROFILE
 
 
 def verificar_dependencias(chrome_binary):
@@ -21,7 +21,6 @@ def verificar_dependencias(chrome_binary):
             "openpyxl": "openpyxl",
             "selenium": "selenium",
             "pyautogui": "pyautogui",
-            "pyperclip": "pyperclip",
         }
         dependencias_faltantes = [
             pacote
@@ -98,6 +97,38 @@ def remover_lock():
             print(f"Não foi possível remover {arquivo.name}: {e}")
 
 
+def migrar_perfil_chrome():
+    """Copia o perfil antigo da pasta do programa para o disco local."""
+    origem = Path(LEGACY_USER_DATA)
+    destino = Path(USER_DATA)
+    if destino.exists() or not origem.is_dir():
+        return
+
+    print(f"Migrando o perfil do Chrome para uma pasta local: {destino}")
+    shutil.copytree(
+        origem,
+        destino,
+        ignore=shutil.ignore_patterns(
+            "Singleton*",
+            "lockfile",
+            "LOCK",
+            "LOCK.*",
+            "lock",
+            "lock.*",
+            "*Cache*",
+            "Cache",
+            "Code Cache",
+            "GPUCache",
+            "GrShaderCache",
+            "ShaderCache",
+            "component_crx_cache",
+            "extensions_crx_cache",
+            "Crashpad",
+        ),
+    )
+    print("Perfil do Chrome migrado. A cópia original foi mantida.")
+
+
 def limpar_cache_selenium():
     """Remove o cache local do Selenium para forcar uma descoberta limpa."""
     print("Limpando cache do Selenium...")
@@ -133,6 +164,8 @@ def atualizar_selenium():
 def preparar():
     """Executa a preparacao completa antes de abrir o navegador."""
     finalizar_chrome()
+
+    migrar_perfil_chrome()
 
     remover_lock()
 

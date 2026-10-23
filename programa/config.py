@@ -61,9 +61,12 @@ CHROME_BINARY = next(
 
 # IMPORTANTE: essa pasta é totalmente isolada do Chrome que você usa
 # no dia a dia. Foi criada copiando o Profile 9 uma única vez
-# (veja scripts/copiar_perfil.py). Isso evita qualquer conflito de
-# lock com janelas normais do Chrome abertas em outros perfis.
-USER_DATA = str(RUNTIME / "chrome_automacao")
+# (veja scripts/copiar_perfil.py). O perfil fica no disco local porque o
+# Chrome pode falhar ao iniciar quando o user-data-dir está em uma rede.
+LEGACY_USER_DATA = RUNTIME / "chrome_automacao"
+USER_DATA = str(
+	Path.home() / "AppData" / "Local" / "WhatsAppBot" / "chrome_automacao"
+)
 
 PROFILE = "Default"
 
@@ -71,14 +74,15 @@ PROFILE = "Default"
 # TEMPOS
 # ==========================================
 
-TEMPO_ESPERA = 30 # Tempo de espera para o WhatsApp Web carregar (em segundos).
+TEMPO_ESPERA = 60 # Tempo de espera para o WhatsApp Web carregar (em segundos).
 
-TEMPO_ENTRE_MENSAGENS_MIN = 10 # Tempo mínimo entre mensagens (em segundos).
+TEMPO_ENTRE_MENSAGENS_MIN = 60 # Intervalo mínimo fixo em segundos entre mensagens.
 
-TEMPO_ENTRE_MENSAGENS_MAX = 20 # Tempo máximo entre mensagens (em segundos).
+TEMPO_ENTRE_MENSAGENS_MAX = 60 # Intervalo máximo fixo em segundos entre mensagens.
 
-MENSAGENS_POR_LOTE = 25 # Envia mensagens em lotes, depois pausa para evitar bloqueio do WhatsApp
+MENSAGENS_POR_LOTE = 500 # Envia mensagens em lotes, depois pausa.
 
-PAUSA_ENTRE_LOTES_SEGUNDOS = 10 * 60 # Pausa de X minutos entre lotes de mensagens.
+PAUSA_ENTRE_LOTES_SEGUNDOS = 8 * 60 * 60 # Pausa de oito horas entre lotes.
 
-MAX_TENTATIVAS = 3  # tentativas de envio
+HORA_INICIO_PAUSA_NOTURNA = 0
+HORA_FIM_PAUSA_NOTURNA = 6

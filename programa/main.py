@@ -1,5 +1,6 @@
 from time import sleep
 from random import randint
+from datetime import datetime
 import re
 import traceback
 
@@ -31,6 +32,8 @@ from config import (
     PAUSA_ENTRE_LOTES_SEGUNDOS,
     TEMPO_ENTRE_MENSAGENS_MIN,
     TEMPO_ENTRE_MENSAGENS_MAX,
+    HORA_INICIO_PAUSA_NOTURNA,
+    HORA_FIM_PAUSA_NOTURNA,
 )
 
 # Depois dessa quantidade, a sessao do navegador e reiniciada para
@@ -40,16 +43,17 @@ LIMITE_TENTATIVAS_REPROCESSAMENTO = 2 # Limite de tentativas para reprocessar co
 
 
 def escolher_midia():
-    # A campanha usa um unico arquivo de midia por execucao.
+    # A campanha pode usar um unico arquivo de midia ou somente texto.
     print()
     print("=" * 60)
     print("O que você quer enviar nesta campanha?")
     print("[1] Imagem")
     print("[2] Vídeo")
+    print("[3] Nenhum (somente texto)")
     print("=" * 60)
 
     while True:
-        escolha = input("Digite 1 ou 2 e pressione ENTER: ").strip()
+        escolha = input("Digite 1, 2 ou 3 e pressione ENTER: ").strip()
 
         if escolha == "1":
             print(f"Selecionado: Imagem ({ARQUIVO_IMAGEM.name})")
@@ -59,7 +63,14 @@ def escolher_midia():
             print(f"Selecionado: Vídeo ({ARQUIVO_VIDEO.name})")
             return ARQUIVO_VIDEO
 
-        print("Opção inválida. Digite 1 ou 2.")
+        if escolha == "3":
+            print(
+                "Nenhuma mídia selecionada. "
+                "Será enviada somente a mensagem de texto."
+            )
+            return None
+
+        print("Opção inválida. Digite 1, 2 ou 3.")
 
 
 def escolher_quantidade_variaveis():
@@ -135,6 +146,59 @@ def preparar_telefone(valor, acrescentar_codigo_brasil):
     return telefone
 
 
+def aguardar_fora_horario_noturno():
+    """Espera ate as 06h se o horario local estiver entre 00h e 06h."""
+    agora = datetime.now()
+    if not HORA_INICIO_PAUSA_NOTURNA <= agora.hour < HORA_FIM_PAUSA_NOTURNA:
+        return
+
+    retomar = agora.replace(
+        hour=HORA_FIM_PAUSA_NOTURNA,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    espera = (retomar - agora).total_seconds()
+    log(
+        "Pausa noturna ativa. Retomando às "
+        f"{retomar:%H:%M} (horário local)."
+    )
+    sleep(espera)
+
+
+def escolher_inicio_nova_campanha(contatos):
+    """Escolhe como iniciar uma nova campanha limpa."""
+    total = len(contatos)
+    print()
+    print("Como deseja continuar?")
+    print("[1] Executar desde o início")
+    print("[2] Escolher um contato")
+
+    while True:
+        escolha = input("Digite 1 ou 2 e pressione ENTER: ").strip()
+
+        if escolha == "1":
+            return 0, 0, 0
+
+        if escolha == "2":
+            while True:
+                entrada = input(
+                    "Informe o contato (ex.: 32 ou 32/2050): "
+                ).strip()
+                try:
+                    numero = int(entrada.split("/", 1)[0].strip())
+                except ValueError:
+                    print("Contato inválido. Informe um número da lista.")
+                    continue
+
+                if 1 <= numero <= total:
+                    return numero - 1, 0, 0
+
+                print(f"Informe um contato entre 1 e {total}.")
+
+        print("Opção inválida. Digite 1 ou 2.")
+
+
 def escolher_tipo_chamada(contatos, estado):
     """Define se a campanha sera nova ou continuara o progresso salvo."""
     print()
@@ -146,8 +210,9 @@ def escolher_tipo_chamada(contatos, estado):
         escolha = input("Digite SIM ou NÃO: ").strip().upper()
         if escolha in {"SIM", "S"}:
             limpar_progresso()
-            print("Progresso limpo. A campanha começará do início.")
-            return 0, 0, 0, set()
+            print("Progresso limpo.")
+            indice, enviados, erros = escolher_inicio_nova_campanha(contatos)
+            return indice, enviados, erros, set()
 
         if escolha in {"NAO", "NÃO", "N"}:
             if estado:
@@ -227,12 +292,14 @@ def main():
     # Valida a entrada antes de abrir o navegador ou iniciar a campanha.
     arquivo_midia = escolher_midia()
 
-    if not arquivo_midia.exists():
+    if arquivo_midia is not None and not arquivo_midia.exists():
         print()
         print(f"ERRO: arquivo não encontrado: {arquivo_midia}")
         print("Coloque o arquivo na pasta 'dados' e rode de novo.")
         input("Pressione ENTER para fechar este terminal.")
         return
+
+    aguardar_fora_horario_noturno()
 
     # Fecha instancias antigas, remove locks e prepara o Selenium.
     preparar()
@@ -264,6 +331,7 @@ def main():
     falhas_consecutivas_indices = set()
     lote_em_recuperacao = None
     tentativas_reprocessamento = 0
+    varredura_final_realizada = False
 
     print()
     print("=" * 60)
@@ -272,7 +340,21 @@ def main():
 
     # A fila pode ser a sequencia normal ou a lista de falhas apos uma recuperacao.
     indices_para_processar = list(range(indice_inicial, total))
-    while indices_para_processar:
+    while indices_para_processar or (
+        falhos_indices and not varredura_final_realizada
+    ):
+        if not indices_para_processar:
+            varredura_final_realizada = True
+            indices_para_processar = sorted(falhos_indices)
+            erros_consecutivos = 0
+            falhas_consecutivas_indices.clear()
+            lote_em_recuperacao = None
+            tentativas_reprocessamento = 0
+            log(
+                "Iniciando varredura final dos contatos que obtiveram erro: "
+                f"{len(indices_para_processar)} contato(s)."
+            )
+
         indice = indices_para_processar.pop(0)
 
         # Um contato enviado anteriormente nao deve receber a mesma campanha de novo.
@@ -298,7 +380,8 @@ def main():
         log("=" * 60)
 
         try:
-            # Cada contato segue a ordem: abrir conversa, anexar midia e enviar texto.
+            # Envia a mídia selecionada, se houver, antes do texto.
+            aguardar_fora_horario_noturno()
             abrir_conversa(driver, telefone)
 
             texto = personalizar_mensagem(
@@ -308,10 +391,16 @@ def main():
                 coluna_contato,
             )
 
-            anexar_midia(driver, arquivo_midia)
-            enviar_midia(driver)
-            sleep(4)
+            if arquivo_midia is not None:
+                anexar_midia(driver, arquivo_midia)
+                aguardar_fora_horario_noturno()
+                enviar_midia(driver)
+                fechar_dialogo_nativo()
+                sleep(4)
+
+            aguardar_fora_horario_noturno()
             escrever_texto(driver, texto)
+            aguardar_fora_horario_noturno()
             enviar_texto(driver)
             sleep(4)
 
@@ -346,10 +435,10 @@ def main():
                 for restante in indices_para_processar
             )
             if enviados % MENSAGENS_POR_LOTE == 0 and ainda_ha_envios:
-                pausa_minutos = PAUSA_ENTRE_LOTES_SEGUNDOS // 60
+                pausa_horas = PAUSA_ENTRE_LOTES_SEGUNDOS // 3600
                 log(
                     f"{MENSAGENS_POR_LOTE} mensagens enviadas. "
-                    f"Pausa de {pausa_minutos} minutos antes do próximo lote."
+                    f"Pausa de {pausa_horas} horas antes do próximo lote."
                 )
                 sleep(PAUSA_ENTRE_LOTES_SEGUNDOS)
 
@@ -360,7 +449,8 @@ def main():
             falhas_consecutivas_indices.add(indice)
             log("")
             log(f"ERRO com {nome}")
-            log(str(erro))
+            log(f"{type(erro).__name__}: {erro}")
+            log(traceback.format_exc())
             fechar_dialogo_nativo()
             salvar_progresso(
                 indice,
