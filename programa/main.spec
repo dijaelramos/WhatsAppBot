@@ -32,7 +32,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX fica desligado porque executaveis compactados geram alertas de antivirus.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,

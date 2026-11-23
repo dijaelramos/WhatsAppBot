@@ -1,8 +1,5 @@
-from time import sleep
-from random import randint
-from datetime import datetime, timedelta
-import re
 import traceback
+from datetime import datetime
 
 # Esta verificacao roda antes dos imports que dependem de bibliotecas instaladas.
 from core.preparar_ambiente import verificar_dependencias
@@ -11,566 +8,223 @@ from config import CHROME_BINARY
 if not verificar_dependencias(CHROME_BINARY):
     raise SystemExit(1)
 
-from core.estado import carregar_progresso, salvar_progresso, limpar_progresso
-from core.preparar_ambiente import preparar, finalizar_chrome, remover_lock
-from core.whatsapp import iniciar_chrome, abrir_whatsapp_web
-from core.excel import ler_contatos
-from core.envio import (
-    abrir_conversa,
-    anexar_midia,
-    enviar_midia,
-    escrever_texto,
-    enviar_texto,
-    fechar_dialogo_nativo,
+from core import menu
+from core.campanha import Campanha
+from core.destinatarios import (
+    carregar_descadastro,
+    montar_destinatarios,
+    telefones_por_indice,
 )
-from core.mensagem import carregar_mensagem, personalizar_mensagem
-from core.logger import iniciar_log, finalizar_log, log
-from config import (
-    ARQUIVO_IMAGEM,
-    ARQUIVO_VIDEO,
-    MENSAGENS_POR_LOTE,
-    PAUSA_ENTRE_LOTES_SEGUNDOS,
-    TEMPO_ENTRE_MENSAGENS_MIN,
-    TEMPO_ENTRE_MENSAGENS_MAX,
-    HORA_INICIO_PAUSA_NOTURNA,
-    HORA_FIM_PAUSA_NOTURNA,
+from core.envio import limpar_uploads, preparar_copia_local
+from core.erros import EntradaInvalida
+from core.estado import (
+    Progresso,
+    arquivar_progresso,
+    carregar_estado,
+    progresso_de_dados,
 )
-
-# Depois dessa quantidade, a sessao do navegador e reiniciada para
-# reprocessar somente os contatos que falharam.
-LIMITE_ERROS_CONSECUTIVOS = 200 # Limite de erros consecutivos antes de reiniciar a sessão.
-LIMITE_TENTATIVAS_REPROCESSAMENTO = 2 # Limite de tentativas para reprocessar contatos falhados.
-
-
-def escolher_midia():
-    # A campanha pode usar um unico arquivo de midia ou somente texto.
-    print()
-    print("=" * 60)
-    print("O que você quer enviar nesta campanha?")
-    print("[1] Imagem")
-    print("[2] Vídeo")
-    print("[3] Nenhum (somente texto)")
-    print("=" * 60)
-
-    while True:
-        escolha = input("Digite 1, 2 ou 3 e pressione ENTER: ").strip()
-
-        if escolha == "1":
-            print(f"Selecionado: Imagem ({ARQUIVO_IMAGEM.name})")
-            return ARQUIVO_IMAGEM
-
-        if escolha == "2":
-            print(f"Selecionado: Vídeo ({ARQUIVO_VIDEO.name})")
-            return ARQUIVO_VIDEO
-
-        if escolha == "3":
-            print(
-                "Nenhuma mídia selecionada. "
-                "Será enviada somente a mensagem de texto."
-            )
-            return None
-
-        print("Opção inválida. Digite 1, 2 ou 3.")
+from core.excel import impressao_digital, ler_contatos
+from core.horario import dormir_ate, em_pausa_noturna, fim_da_pausa
+from core.inexistentes import carregar_inexistentes, oferecer_remocao
+from core.logger import finalizar_log, iniciar_log, log
+from core.mensagem import carregar_mensagem, validar_variaveis
+from core.preparar_ambiente import preparar
+from core.whatsapp import CanalWhatsApp
 
 
-def escolher_quantidade_variaveis():
-    """Define quantos placeholders {varN} serao usados na mensagem."""
-    print()
-    print("Quantas variáveis a mensagem deve usar? (1 a 5)")
-
-    while True:
-        try:
-            quantidade = int(input("Digite uma quantidade: ").strip())
-        except ValueError:
-            quantidade = 0
-
-        if 1 <= quantidade <= 5:
-            print(f"Serão usadas {quantidade} variável(is).")
-            return quantidade
-
-        print("Opção inválida. Digite um número entre 1 e 5.")
+def falhas_pendentes(selecao, progresso):
+    """Lista os destinatarios atuais que ainda precisam de nova tentativa."""
+    return [
+        destinatario
+        for destinatario in selecao.destinatarios
+        if destinatario.telefone in progresso.falhos
+    ]
 
 
-def escolher_coluna_contato(contatos):
-    """Define qual coluna da planilha contem o telefone do WhatsApp."""
-    print()
-    print("Em qual coluna está o contato do WhatsApp?")
-    quantidade_colunas = len(contatos[0])
-    for indice in range(1, quantidade_colunas + 1):
-        print(f"[{indice}] Coluna {indice}")
+def indice_para_continuar(selecao, progresso):
+    """Falhas pendentes tem prioridade sobre o proximo contato da lista."""
+    indices_falhos = [
+        destinatario.indice
+        for destinatario in falhas_pendentes(selecao, progresso)
+    ]
+    return min(indices_falhos + [progresso.ultimo_indice + 1])
 
-    while True:
-        try:
-            coluna = int(input("Digite o número da coluna: ").strip())
-        except ValueError:
-            coluna = 0
 
-        if 1 <= coluna <= quantidade_colunas:
-            print(
-                f"O contato do WhatsApp será a coluna {coluna}: "
-                f"Coluna {coluna}."
-            )
-            return coluna
+def carregar_progresso_salvo(contatos, coluna, acrescentar_55):
+    """Le o progresso; o formato antigo so faz sentido com a planilha intacta."""
+    dados = carregar_estado()
+    if dados is None:
+        return None
+    return progresso_de_dados(
+        dados,
+        telefones_por_indice(contatos, coluna, acrescentar_55),
+    )
 
+
+def definir_progresso(total, selecao, progresso, assinatura):
+    """Retorna (progresso, indice inicial, se a campanha e nova)."""
+    campanha_nova = menu.perguntar_campanha_nova()
+
+    if campanha_nova:
+        return Progresso(), menu.escolher_inicio_nova_campanha(total), True
+
+    if progresso is None:
+        print("Nenhum progresso salvo. A campanha começará do início.")
+        return Progresso(), 0, False
+
+    if progresso.planilha_sha256 and progresso.planilha_sha256 != assinatura:
+        print()
         print(
-            f"Opção inválida. Digite um número entre 1 e "
-            f"{quantidade_colunas}."
+            "AVISO: a planilha mudou desde a última execução. Quem já recebeu "
+            "continua sendo pulado pelo número de telefone."
         )
 
-
-def escolher_prefixo_brasil():
-    """Define se os telefones ja possuem o codigo do Brasil (55)."""
-    print()
-    print("Os contatos já começam com 55 (código do Brasil)?")
-    print("Exemplo sem 55: 85999999999 -> será usado 5585999999999")
-
-    while True:
-        escolha = input("Digite S para sim ou N para não: ").strip().upper()
-        if escolha in {"S", "SIM"}:
-            print("Os contatos serão usados com o 55 já informado.")
-            return False
-        if escolha in {"N", "NAO", "NÃO"}:
-            print("O código 55 será acrescentado aos contatos.")
-            return True
-        print("Opção inválida. Digite S ou N.")
+    inicio = menu.escolher_inicio_retomada(
+        total,
+        progresso,
+        indice_para_continuar(selecao, progresso),
+    )
+    return progresso, inicio, False
 
 
-def preparar_telefone(valor, acrescentar_codigo_brasil):
-    """Remove caracteres extras e garante o codigo 55 quando necessario."""
-    telefone_bruto = str(valor).strip()
-    if telefone_bruto.endswith(".0"):
-        telefone_bruto = telefone_bruto[:-2]
-    telefone = re.sub(r"\D", "", telefone_bruto)
-    if acrescentar_codigo_brasil and not telefone.startswith("55"):
-        telefone = "55" + telefone
-    return telefone
-
-
-def aguardar_fora_horario_noturno():
-    """Espera ate as 06h se o horario local estiver entre 00h e 06h."""
+def aguardar_fim_da_pausa_noturna():
     agora = datetime.now()
-    if not HORA_INICIO_PAUSA_NOTURNA <= agora.hour < HORA_FIM_PAUSA_NOTURNA:
-        return
-
-    retomar = agora.replace(
-        hour=HORA_FIM_PAUSA_NOTURNA,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    espera = (retomar - agora).total_seconds()
-    log(
-        "Pausa noturna ativa. Retomando às "
-        f"{retomar:%H:%M} (horário local)."
-    )
-    sleep(espera)
+    if em_pausa_noturna(agora):
+        retomar = fim_da_pausa(agora)
+        log(f"Pausa noturna ativa. Retomando às {retomar:%H:%M}.")
+        dormir_ate(retomar)
 
 
-def calcular_fim_espera_com_pausa_noturna(agora, segundos):
-    """Adia o fim de uma espera para as 06h quando ela atravessa a madrugada."""
-    fim_previsto = agora + timedelta(seconds=segundos)
-    inicio_pausa = agora.replace(
-        hour=HORA_INICIO_PAUSA_NOTURNA,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    fim_pausa = agora.replace(
-        hour=HORA_FIM_PAUSA_NOTURNA,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
+def executar_campanha(selecao, fila, progresso, midia, contatos, coluna, acrescentar_55):
+    """Abre o navegador somente depois que a entrada foi validada e confirmada."""
+    aguardar_fim_da_pausa_noturna()
+    preparar()
+    iniciar_log()
 
-    if agora >= fim_pausa:
-        inicio_pausa += timedelta(days=1)
-        fim_pausa += timedelta(days=1)
+    canal = CanalWhatsApp()
+    copia_midia = preparar_copia_local(midia) if midia else None
+    try:
+        canal.iniciar()
+        concluida = Campanha(
+            selecao.destinatarios,
+            fila,
+            progresso,
+            canal,
+            copia_midia,
+            len(contatos),
+        ).executar()
 
-    if fim_previsto >= inicio_pausa:
-        return max(fim_previsto, fim_pausa)
+        finalizar_log(len(fila), progresso)
+        oferecer_remocao(contatos, coluna, acrescentar_55, progresso)
+        if concluida and not falhas_pendentes(selecao, progresso):
+            arquivar_progresso()
+        else:
+            log("O progresso foi mantido em estado.json para continuar depois.")
 
-    return fim_previsto
-
-
-def dormir_respeitando_horario_noturno(segundos):
-    """Executa uma espera sem retomar envios entre meia-noite e 06h."""
-    agora = datetime.now()
-    fim_previsto = agora + timedelta(seconds=segundos)
-    fim_espera = calcular_fim_espera_com_pausa_noturna(agora, segundos)
-
-    if fim_espera > fim_previsto:
-        log(
-            "Pausa noturna ativa. Retomando às "
-            f"{fim_espera:%H:%M} (horário local)."
-        )
-
-    sleep(max(0, (fim_espera - datetime.now()).total_seconds()))
-
-
-def escolher_inicio_nova_campanha(contatos):
-    """Escolhe como iniciar uma nova campanha limpa."""
-    total = len(contatos)
-    print()
-    print("Como deseja continuar?")
-    print("[1] Executar desde o início")
-    print("[2] Escolher um contato")
-
-    while True:
-        escolha = input("Digite 1 ou 2 e pressione ENTER: ").strip()
-
-        if escolha == "1":
-            return 0, 0, 0
-
-        if escolha == "2":
-            while True:
-                entrada = input(
-                    "Informe o contato (ex.: 32 ou 32/2050): "
-                ).strip()
-                try:
-                    numero = int(entrada.split("/", 1)[0].strip())
-                except ValueError:
-                    print("Contato inválido. Informe um número da lista.")
-                    continue
-
-                if 1 <= numero <= total:
-                    return numero - 1, 0, 0
-
-                print(f"Informe um contato entre 1 e {total}.")
-
-        print("Opção inválida. Digite 1 ou 2.")
-
-
-def escolher_tipo_chamada(contatos, estado):
-    """Define se a campanha sera nova ou continuara o progresso salvo."""
-    print()
-    print("Esta é uma nova chamada/campanha?")
-    print("SIM: limpa o progresso e envia todos desde o início.")
-    print("NÃO: mantém o progresso e mostra as opções de continuação.")
-
-    while True:
-        escolha = input("Digite SIM ou NÃO: ").strip().upper()
-        if escolha in {"SIM", "S"}:
-            limpar_progresso()
-            print("Progresso limpo.")
-            indice, enviados, erros = escolher_inicio_nova_campanha(contatos)
-            return indice, enviados, erros, set()
-
-        if escolha in {"NAO", "NÃO", "N"}:
-            if estado:
-                indice, enviados, erros = escolher_inicio(contatos, estado)
-                return (
-                    indice,
-                    enviados,
-                    erros,
-                    set(estado.get("enviados_indices", [])),
-                )
-
-            print("Nenhum progresso salvo. A campanha começará do início.")
-            return 0, 0, 0, set()
-
-        print("Opção inválida. Digite SIM ou NÃO.")
-
-
-def escolher_inicio(contatos, estado):
-    """Escolhe onde continuar e recupera os contadores salvos."""
-    if not estado:
-        return 0, 0, 0
-
-    total = len(contatos)
-    proximo_indice = estado["ultimo_indice"] + 1
-    enviados = estado.get("enviados", 0)
-    erros = estado.get("erros", 0)
-
-    print()
-    print("=" * 60)
-    print("PROGRESSO ENCONTRADO")
-    print("=" * 60)
-    print(f'Último contato : {estado["nome"]}')
-    print(f'Telefone.......: {estado["telefone"]}')
-    print(f'Índice.........: {estado["ultimo_indice"] + 1}/{total}')
-    print(f'Enviados.......: {enviados}')
-    print(f'Erros..........: {erros}')
-    print(f'Data...........: {estado["data_hora"]}')
-    print()
-    print("Como deseja continuar?")
-    print("[1] Executar desde o início")
-    print("[2] Continuar de onde parou")
-    print("[3] Escolher um contato")
-
-    while True:
-        escolha = input("Digite 1, 2 ou 3 e pressione ENTER: ").strip()
-
-        if escolha == "1":
-            return 0, 0, 0
-
-        if escolha == "2":
-            # Falhas pendentes tem prioridade sobre o proximo indice normal.
-            falhos_indices = estado.get("falhos_indices", [])
-            if falhos_indices:
-                return min(falhos_indices), enviados, erros
-            return min(proximo_indice, total), enviados, erros
-
-        if escolha == "3":
-            while True:
-                entrada = input(
-                    "Informe o contato (ex.: 32 ou 32/2050): "
-                ).strip()
-                try:
-                    numero = int(entrada.split("/", 1)[0].strip())
-                except ValueError:
-                    print("Contato inválido. Informe um número da lista.")
-                    continue
-
-                if 1 <= numero <= total:
-                    return numero - 1, enviados, erros
-
-                print(f"Informe um contato entre 1 e {total}.")
-
-        print("Opção inválida. Digite 1, 2 ou 3.")
+        input("Pressione ENTER para fechar.")
+    finally:
+        canal.encerrar()
+        limpar_uploads()
 
 
 def main():
-    # Valida a entrada antes de abrir o navegador ou iniciar a campanha.
-    arquivo_midia = escolher_midia()
+    # Tudo e validado antes de fechar ou abrir qualquer navegador.
+    midia = menu.escolher_midia()
+    if midia is not None and not midia.exists():
+        raise EntradaInvalida(
+            f"Arquivo não encontrado: {midia}. "
+            "Coloque o arquivo na pasta 'dados' e rode de novo."
+        )
 
-    if arquivo_midia is not None and not arquivo_midia.exists():
-        print()
-        print(f"ERRO: arquivo não encontrado: {arquivo_midia}")
-        print("Coloque o arquivo na pasta 'dados' e rode de novo.")
-        input("Pressione ENTER para fechar este terminal.")
+    mensagem = carregar_mensagem()
+    contatos = ler_contatos()
+    coluna = menu.escolher_coluna_contato(contatos)
+    acrescentar_55 = menu.escolher_prefixo_brasil()
+    quantidade_variaveis = menu.escolher_quantidade_variaveis()
+    validar_variaveis(mensagem, quantidade_variaveis, len(contatos[0]) - 1)
+
+    progresso_salvo = carregar_progresso_salvo(contatos, coluna, acrescentar_55)
+    contatos = oferecer_remocao(
+        contatos,
+        coluna,
+        acrescentar_55,
+        progresso_salvo,
+    )
+
+    selecao = montar_destinatarios(
+        contatos,
+        mensagem,
+        coluna,
+        acrescentar_55,
+        quantidade_variaveis,
+        carregar_descadastro(),
+        carregar_inexistentes(),
+    )
+    menu.mostrar_triagem(selecao)
+
+    assinatura = impressao_digital()
+    progresso, inicio, campanha_nova = definir_progresso(
+        len(contatos),
+        selecao,
+        progresso_salvo,
+        assinatura,
+    )
+
+    fila = [
+        destinatario
+        for destinatario in selecao.destinatarios
+        if destinatario.indice >= inicio
+        and destinatario.telefone not in progresso.enviados
+        and destinatario.telefone not in progresso.invalidos
+    ]
+    if not fila:
+        print("Não há contatos pendentes para esta campanha.")
+        input("Pressione ENTER para fechar.")
         return
 
-    aguardar_fora_horario_noturno()
+    # A varredura final tambem alcanca falhas anteriores ao contato escolhido.
+    telefones_na_fila = {destinatario.telefone for destinatario in fila}
+    total_previsto = len(fila) + sum(
+        destinatario.telefone not in telefones_na_fila
+        for destinatario in falhas_pendentes(selecao, progresso)
+    )
 
-    # Fecha instancias antigas, remove locks e prepara o Selenium.
-    preparar()
-    iniciar_log()
-    driver = iniciar_chrome()
-    abrir_whatsapp_web(driver)
-    contatos = ler_contatos()
-    coluna_contato = escolher_coluna_contato(contatos)
-    acrescentar_codigo_brasil = escolher_prefixo_brasil()
-    quantidade_variaveis = escolher_quantidade_variaveis()
+    if not menu.confirmar_envio(fila, midia, total_previsto):
+        print("Envio cancelado. Nada foi alterado.")
+        input("Pressione ENTER para fechar.")
+        return
 
-    # O estado permite continuar uma campanha interrompida sem duplicar envios.
-    estado = carregar_progresso()
-    (
-        indice_inicial,
-        enviados,
-        erros,
-        enviados_indices,
-    ) = escolher_tipo_chamada(contatos, estado)
+    # So descarta o historico anterior depois da confirmacao do usuario.
+    if campanha_nova:
+        arquivar_progresso()
+    progresso.planilha_sha256 = assinatura
 
-    if estado:
-        log("")
-        log(f"Execução iniciada no contato {indice_inicial + 1}...")
-
-    mensagem_base = carregar_mensagem()
-    total = len(contatos)
-    falhos_indices = set(estado.get("falhos_indices", [])) if estado else set()
-    erros_consecutivos = 0
-    falhas_consecutivas_indices = set()
-    lote_em_recuperacao = None
-    tentativas_reprocessamento = 0
-    varredura_final_realizada = False
-
-    print()
-    print("=" * 60)
-    print(f"Foram encontrados {total} contatos.")
-    print("=" * 60)
-
-    # A fila pode ser a sequencia normal ou a lista de falhas apos uma recuperacao.
-    indices_para_processar = list(range(indice_inicial, total))
-    while indices_para_processar or (
-        falhos_indices and not varredura_final_realizada
-    ):
-        if not indices_para_processar:
-            varredura_final_realizada = True
-            indices_para_processar = sorted(falhos_indices)
-            erros_consecutivos = 0
-            falhas_consecutivas_indices.clear()
-            lote_em_recuperacao = None
-            tentativas_reprocessamento = 0
-            log(
-                "Iniciando varredura final dos contatos que obtiveram erro: "
-                f"{len(indices_para_processar)} contato(s)."
-            )
-
-        indice = indices_para_processar.pop(0)
-
-        # Um contato enviado anteriormente nao deve receber a mesma campanha de novo.
-        if indice in enviados_indices:
-            log(f"Pulando {indice + 1}/{total}: mensagem já enviada.")
-            continue
-
-        contato = contatos[indice]
-        nome = str(list(contato.values())[0]).strip()
-        telefone = preparar_telefone(
-            list(contato.values())[coluna_contato - 1],
-            acrescentar_codigo_brasil,
-        )
-        titulo = f"[{indice + 1}/{total}] {nome}"
-
-        print("")
-        print("=" * 60)
-        print(titulo)
-        print("=" * 60)
-        log("")
-        log("=" * 60)
-        log(titulo)
-        log("=" * 60)
-
-        try:
-            # Envia a mídia selecionada, se houver, antes do texto.
-            aguardar_fora_horario_noturno()
-            abrir_conversa(driver, telefone)
-
-            texto = personalizar_mensagem(
-                mensagem_base,
-                contato,
-                quantidade_variaveis,
-                coluna_contato,
-            )
-
-            if arquivo_midia is not None:
-                anexar_midia(driver, arquivo_midia)
-                aguardar_fora_horario_noturno()
-                enviar_midia(driver)
-                fechar_dialogo_nativo()
-                sleep(4)
-
-            aguardar_fora_horario_noturno()
-            escrever_texto(driver, texto)
-            aguardar_fora_horario_noturno()
-            enviar_texto(driver)
-            sleep(4)
-
-            enviados += 1
-            enviados_indices.add(indice)
-            falhos_indices.discard(indice)
-            falhas_consecutivas_indices.clear()
-            lote_em_recuperacao = None
-            tentativas_reprocessamento = 0
-            salvar_progresso(
-                indice,
-                nome,
-                telefone,
-                enviados,
-                erros,
-                enviados_indices,
-                falhos_indices,
-            )
-            erros_consecutivos = 0
-
-            espera = randint(
-                TEMPO_ENTRE_MENSAGENS_MIN,
-                TEMPO_ENTRE_MENSAGENS_MAX,
-            )
-
-            log("Mensagem enviada com sucesso.")
-            log(f"Aguardando {espera} segundos...")
-            dormir_respeitando_horario_noturno(espera)
-
-            ainda_ha_envios = any(
-                restante not in enviados_indices
-                for restante in indices_para_processar
-            )
-            if enviados % MENSAGENS_POR_LOTE == 0 and ainda_ha_envios:
-                pausa_horas = PAUSA_ENTRE_LOTES_SEGUNDOS // 3600
-                log(
-                    f"{MENSAGENS_POR_LOTE} mensagens enviadas. "
-                    f"Pausa de {pausa_horas} horas antes do próximo lote."
-                )
-                dormir_respeitando_horario_noturno(
-                    PAUSA_ENTRE_LOTES_SEGUNDOS
-                )
-
-        except Exception as erro:
-            # Salva a falha imediatamente para que uma interrupcao nao perca a fila.
-            erros += 1
-            falhos_indices.add(indice)
-            falhas_consecutivas_indices.add(indice)
-            log("")
-            log(f"ERRO com {nome}")
-            log(f"{type(erro).__name__}: {erro}")
-            log(traceback.format_exc())
-            fechar_dialogo_nativo()
-            salvar_progresso(
-                indice,
-                nome,
-                telefone,
-                enviados,
-                erros,
-                enviados_indices,
-                falhos_indices,
-            )
-
-            erros_consecutivos += 1
-            if erros_consecutivos >= LIMITE_ERROS_CONSECUTIVOS:
-                lote_falhas = sorted(falhas_consecutivas_indices)
-                if lote_em_recuperacao == lote_falhas:
-                    tentativas_reprocessamento += 1
-                else:
-                    lote_em_recuperacao = lote_falhas
-                    tentativas_reprocessamento = 1
-
-                # A nova sessao recebe somente o bloco que falhou consecutivamente.
-                log(
-                    f"{LIMITE_ERROS_CONSECUTIVOS} erros consecutivos. "
-                    f"Tentativa {tentativas_reprocessamento}/"
-                    f"{LIMITE_TENTATIVAS_REPROCESSAMENTO} para o bloco "
-                    f"{lote_falhas[0] + 1}-{lote_falhas[-1] + 1}."
-                )
-                driver.quit()
-                finalizar_chrome()
-                remover_lock()
-                driver = iniciar_chrome()
-                abrir_whatsapp_web(driver)
-                fila_restante = [
-                    restante
-                    for restante in indices_para_processar
-                    if restante not in lote_falhas
-                ]
-                if tentativas_reprocessamento <= LIMITE_TENTATIVAS_REPROCESSAMENTO:
-                    indices_para_processar = lote_falhas + fila_restante
-                else:
-                    log(
-                        "Bloco de falhas repetido duas vezes. "
-                        "Avançando para o próximo contato."
-                    )
-                    indices_para_processar = fila_restante
-                erros_consecutivos = 0
-                falhas_consecutivas_indices.clear()
-            continue
-
-    # Mantem o estado para uma proxima execucao enquanto houver falhas pendentes.
-    if falhos_indices:
-        log(
-            f"Ainda existem {len(falhos_indices)} contato(s) com erro. "
-            "O progresso foi mantido em estado.json."
-        )
-    else:
-        limpar_progresso()
-    finalizar_log(total, enviados, erros)
-
-    input("Pressione ENTER para fechar.")
-    driver.quit()
+    executar_campanha(
+        selecao,
+        fila,
+        progresso,
+        midia,
+        contatos,
+        coluna,
+        acrescentar_55,
+    )
 
 
 if __name__ == "__main__":
+    # Mantem o terminal aberto para que uma falha possa ser lida, mesmo
+    # quando o exe e aberto por duplo clique.
     try:
         main()
+    except KeyboardInterrupt:
+        print("\nInterrompido pelo usuário. O progresso já está salvo.")
+        input("Pressione ENTER para fechar este terminal.")
+    except EntradaInvalida as erro:
+        print(f"\nERRO: {erro}")
+        input("\nPressione ENTER para fechar este terminal.")
     except Exception as erro:
-        # Mantem o terminal aberto para que uma falha no computador do usuario
-        # possa ser lida, mesmo quando o exe e aberto por duplo clique.
         print("\nERRO FATAL: o WhatsAppBot nao conseguiu continuar.")
         print(f"Detalhe: {erro}")
         traceback.print_exc()
-
-        try:
-            log("ERRO FATAL no programa:")
-            log(traceback.format_exc())
-        except Exception:
-            pass
-
+        log("ERRO FATAL no programa:")
+        log(traceback.format_exc())
         input("\nPressione ENTER para fechar este terminal.")

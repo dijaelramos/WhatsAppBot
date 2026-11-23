@@ -20,9 +20,5 @@ runtime/
 .vscode/
 Thumbs.db
 
-# Dados pessoais e arquivos grandes da campanha
-dados/contatos.xlsx
-dados/*.xls
-dados/*.xlsx
-dados/imagem.*
-dados/video.*
+# Dados pessoais e arquivos da campanha, inclusive em subpastas
+dados/**

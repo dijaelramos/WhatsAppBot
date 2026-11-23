@@ -31,6 +31,10 @@ ARQUIVO_IMAGEM = DADOS / "imagem.png"
 
 ARQUIVO_VIDEO = DADOS / "video.mp4"
 
+ARQUIVO_DESCADASTRO = DADOS / "descadastro.txt" # Telefones que nunca devem receber mensagens.
+
+ARQUIVO_INEXISTENTES = DADOS / "numeros_inexistentes.txt" # Telefones que o WhatsApp informou que nao existem.
+
 # ==========================================
 # RUNTIME (tudo que é gerado pela execução)
 # ==========================================
@@ -80,9 +84,18 @@ TEMPO_ENTRE_MENSAGENS_MIN = 600 # Intervalo mínimo fixo em segundos entre mensa
 
 TEMPO_ENTRE_MENSAGENS_MAX = 600 # Intervalo máximo fixo em segundos entre mensagens.
 
-MENSAGENS_POR_LOTE = 50 # Envia mensagens em lotes, depois pausa.
+MENSAGENS_POR_LOTE = 45 # Envia mensagens em lotes, depois pausa.
 
 PAUSA_ENTRE_LOTES_SEGUNDOS = 8 * 60 * 60 # Pausa de oito horas entre lotes.
 
+# A pausa pode atravessar a meia-noite (ex.: inicio 20 e fim 8).
 HORA_INICIO_PAUSA_NOTURNA = 0
-HORA_FIM_PAUSA_NOTURNA = 6
+HORA_FIM_PAUSA_NOTURNA = 8
+
+# ==========================================
+# RECUPERACAO
+# ==========================================
+
+LIMITE_ERROS_CONSECUTIVOS = 10 # Erros seguidos antes de reiniciar o Chrome.
+
+LIMITE_REINICIOS_SEM_SUCESSO = 3 # Reinicios seguidos sem nenhum envio antes de parar a campanha.

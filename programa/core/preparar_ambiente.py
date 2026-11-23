@@ -7,6 +7,22 @@ from pathlib import Path
 
 from config import LEGACY_USER_DATA, USER_DATA, PROFILE
 
+ARQUIVO_REQUISITOS = Path(__file__).resolve().parents[2] / "requirements.txt"
+
+# Encerra somente os processos do Chrome que usam o perfil da automacao e
+# so termina quando eles sumirem: o perfil precisa estar livre para reabrir.
+_COMANDO_FECHAR_CHROME_DO_BOT = (
+    "$limite = (Get-Date).AddSeconds(30); "
+    "do { "
+    "$processos = @(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+    "Where-Object { $_.CommandLine -and "
+    "$_.CommandLine.Contains($env:WHATSAPPBOT_PERFIL) }); "
+    "$processos | ForEach-Object { Stop-Process -Id $_.ProcessId -Force "
+    "-ErrorAction SilentlyContinue }; "
+    "if ($processos.Count) { Start-Sleep -Milliseconds 500 } "
+    "} while ($processos.Count -and (Get-Date) -lt $limite)"
+)
+
 
 def verificar_dependencias(chrome_binary):
     """Verifica o ambiente antes de carregar os modulos externos do bot."""
@@ -20,7 +36,6 @@ def verificar_dependencias(chrome_binary):
             "pandas": "pandas",
             "openpyxl": "openpyxl",
             "selenium": "selenium",
-            "pyautogui": "pyautogui",
         }
         dependencias_faltantes = [
             pacote
@@ -40,8 +55,9 @@ def verificar_dependencias(chrome_binary):
             return False
 
         print("Iniciando a instalacao das dependencias...")
+        # O requirements.txt fixa as versoes testadas com o bot.
         resultado = subprocess.run(
-            [sys.executable, "-m", "pip", "install", *dependencias_faltantes]
+            [sys.executable, "-m", "pip", "install", "-r", str(ARQUIVO_REQUISITOS)]
         )
         if resultado.returncode != 0:
             print("A instalacao falhou. Corrija o ambiente e tente novamente.")
@@ -59,11 +75,18 @@ def verificar_dependencias(chrome_binary):
 
 
 def finalizar_chrome():
-    """Encerra todas as instancias do Chrome no Windows."""
-    print("Fechando Chrome...")
+    """Encerra o Chrome da automacao, sem tocar no Chrome pessoal do usuario."""
+    print("Fechando o Chrome da automação...")
 
     subprocess.run(
-        ["taskkill", "/F", "/IM", "chrome.exe", "/T"],
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            _COMANDO_FECHAR_CHROME_DO_BOT,
+        ],
+        env={**os.environ, "WHATSAPPBOT_PERFIL": str(USER_DATA)},
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -129,38 +152,6 @@ def migrar_perfil_chrome():
     print("Perfil do Chrome migrado. A cópia original foi mantida.")
 
 
-def limpar_cache_selenium():
-    """Remove o cache local do Selenium para forcar uma descoberta limpa."""
-    print("Limpando cache do Selenium...")
-
-    cache = Path.home() / ".cache" / "selenium"
-
-    if cache.exists():
-
-        try:
-
-            shutil.rmtree(cache)
-            print("Cache removido.")
-
-        except Exception as e:
-
-            print(e)
-
-
-def atualizar_selenium():
-    """Atualiza o pacote Selenium usado pelo bot."""
-    # No executavel, o Selenium ja esta incorporado e nao existe pip externo.
-    if getattr(sys, "frozen", False):
-        print("Selenium incorporado ao executavel; nenhuma atualizacao necessaria.")
-        return
-
-    print("Atualizando Selenium...")
-
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-U", "selenium"]
-    )
-
-
 def preparar():
     """Executa a preparacao completa antes de abrir o navegador."""
     finalizar_chrome()
@@ -168,10 +159,6 @@ def preparar():
     migrar_perfil_chrome()
 
     remover_lock()
-
-    limpar_cache_selenium()
-
-    atualizar_selenium()
 
     print("Ambiente preparado.")
 

@@ -1,1 +1,1 @@
-pyinstaller --onefile --name WhatsappBot main.py
+pyinstaller main.spec
